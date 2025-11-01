@@ -3,92 +3,128 @@ title: "Analyse Data"
 output: html_notebook
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
-
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+# Analyse de données de l'article scientifique
 
 ```{r}
+ # Charge le package DADA2 pour l'analyse de séquences amplicon et affiche la version utilisée
 library(dada2); packageVersion("dada2")
 ```
 ```{r}
+# Définit le chemin vers le dossier contenant les fichiers FASTQ après décompression.
+# À modifier selon l'emplacement de tes fichiers.
 path <- "Data" # CHANGE ME to the directory containing the fastq files after unzipping.
+
+# Liste tous les fichiers présents dans ce dossier pour vérifier que les FASTQ sont bien là
 list.files(path)
 ```
 
 ```{r}
-# Forward and reverse fastq filenames have format: SAMPLENAME_R1_001.fastq and SAMPLENAME_R2_001.fastq
+# Définit le chemin vers le dossier contenant les fichiers FASTQ
+path <- "~/"
+
+# Récupère et trie tous les fichiers FASTQ forward (_1.fastq)
 fnFs <- sort(list.files(path, pattern="_1.fastq", full.names = TRUE))
+
+# Récupère et trie tous les fichiers FASTQ reverse (_2.fastq)
 fnRs <- sort(list.files(path, pattern="_2.fastq", full.names = TRUE))
-# Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
+
+# Extrait les noms d'échantillons à partir des fichiers forward
+# Suppose que les fichiers ont le format SAMPLENAME_XXX.fastq
 sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
 ```
 
 ```{r}
+# Affiche le profil de qualité des deux premiers fichiers FASTQ forward
 plotQualityProfile(fnFs[1:2])
 ```
 
 ```{r}
+# Affiche le profil de qualité des deux premiers fichiers FASTQ reverse
 plotQualityProfile(fnRs[1:2])
 ```
 ```{r}
-# Place filtered files in filtered/ subdirectory
+# Définit le chemin et le nom des fichiers forward filtrés
+# Les fichiers filtrés seront placés dans le sous-dossier "filtered" avec le suffixe "_F_filt.fastq.gz"
 filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+
+# Définit le chemin et le nom des fichiers reverse filtrés
+# Les fichiers filtrés seront placés dans le sous-dossier "filtered" avec le suffixe "_R_filt.fastq.gz"
 filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+
+# Associe les noms des échantillons aux vecteurs de fichiers filtrés pour un accès plus facile
 names(filtFs) <- sample.names
 names(filtRs) <- sample.names
 ```
 
 ```{r}
+# Filtre et tronque les fichiers FASTQ forward et reverse selon la qualité et la longueur, supprime les lectures contenant des N ou trop d'erreurs, retire les contaminants PhiX, compresse les fichiers filtrés, utilise le multithreading, et stocke un tableau résumant le nombre de lectures conservées et supprimées.
 out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(240,160),
-              maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
-              compress=TRUE, multithread=TRUE) # On Windows set multithread=FALSE
-head(out)
+                     maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
+                     compress=TRUE, multithread=TRUE)  # On Windows, mettre multithread=FALSE
+
+head(out)  # Affiche un aperçu du tableau des lectures conservées
 ```
 
 ```{r}
+# Apprend les profils d'erreurs à partir des fichiers forward filtrés pour modéliser la probabilité d'erreurs de séquençage, en utilisant le multithreading pour accélérer le calcul
 errF <- learnErrors(filtFs, multithread=TRUE)
 ```
 ```{r}
+# Apprend les profils d'erreurs à partir des fichiers reverse filtrés pour modéliser la probabilité d'erreurs de séquençage, en utilisant le multithreading pour accélérer le calcul
 errR <- learnErrors(filtRs, multithread=TRUE)
 ```
 
 
 ```{r}
+# Affiche le graphique des profils d’erreurs appris pour les lectures forward afin de comparer les taux d’erreur observés et théoriques selon les scores de qualité
 plotErrors(errF, nominalQ=TRUE)
 ```
 
 ```{r}
+# Applique l’algorithme DADA aux fichiers forward filtrés pour inférer les séquences exactes d’amplicons en corrigeant les erreurs de séquençage à partir du modèle d’erreurs appris
 dadaFs <- dada(filtFs, err=errF, multithread=TRUE)
 ```
 ```{r}
+# Applique l’algorithme DADA aux fichiers reverse filtrés pour inférer les séquences exactes d’amplicons en corrigeant les erreurs de séquençage à partir du modèle d’erreurs appris
 dadaRs <- dada(filtRs, err=errR, multithread=TRUE)
 ```
 ```{r}
+# Affiche le résultat de l’inférence DADA pour le premier échantillon afin d’examiner les séquences identifiées et leur abondance
 dadaFs[[1]]
 ```
 ```{r}
+# Fusionne les lectures forward et reverse pour chaque échantillon en alignant les régions qui se chevauchent et en éliminant les paires incohérentes
 mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
-# Inspect the merger data.frame from the first sample
+
+# Affiche les premières lignes du tableau de fusion du premier échantillon pour vérifier le bon appariement des lectures
 head(mergers[[1]])
 ```
 ```{r}
+# Construit la table de séquences (Sequence Table) à partir des lectures fusionnées, où chaque ligne correspond à un échantillon et chaque colonne à une séquence unique
 seqtab <- makeSequenceTable(mergers)
+
+# Affiche les dimensions de la table (nombre d’échantillons et nombre de séquences uniques détectées)
 dim(seqtab)
 ```
 ```{r}
-# Inspect distribution of sequence lengths
+# Affiche la distribution des longueurs des séquences inférées pour vérifier leur homogénéité et détecter d’éventuelles séquences aberrantes
 table(nchar(getSequences(seqtab)))
 ```
 
 ```{r}
+# Supprime les séquences chimériques de la table à l’aide de la méthode de détection par consensus, en utilisant le multithreading pour accélérer le traitement
 seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
+
+# Affiche les dimensions de la table après suppression des séquences chimériques pour connaître le nombre de séquences restantes
 dim(seqtab.nochim)
 ```
 ```{r}
+# Calcule la proportion de séquences non chimériques par rapport au total pour évaluer la qualité du jeu de données après détection des chimères
 sum(seqtab.nochim)/sum(seqtab)
 ```
 
 ```{r}
+# Crée un tableau de suivi récapitulant le nombre de lectures conservées à chaque étape du pipeline DADA2 (filtrage, débruitage, fusion et suppression des chimères) pour chaque échantillon
 getN <- function(x) sum(getUniques(x))
 track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
 # If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
@@ -98,10 +134,12 @@ head(track)
 ```
 
 ```{r}
+# Assigne la taxonomie à chaque séquence non chimérique en utilisant la base SILVA v132, avec multithreading pour accélérer le traitement
 taxa <- assignTaxonomy(seqtab.nochim, "silva_nr_v132_train_set.fa.gz", multithread=TRUE)
 ```
 
 ```{r}
+# Prépare un tableau de taxonomie pour affichage en supprimant les noms de séquences afin de faciliter la lecture
 taxa.print <- taxa # Removing sequence rownames for display only
 rownames(taxa.print) <- NULL
 head(taxa.print)
