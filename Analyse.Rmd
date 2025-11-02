@@ -3,7 +3,6 @@ title: "Analyse Data"
 output: html_notebook
 ---
 
-# Analyse de données de l'article scientifique
 
 ```{r}
  # Charge le package DADA2 pour l'analyse de séquences amplicon et affiche la version utilisée
